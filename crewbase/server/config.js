@@ -20,17 +20,23 @@ export const config = {
   dataDir: path.resolve(env.DATA_DIR || './data'),
   publicUrl: env.PUBLIC_URL || '',
 
-  // AI
+  // AI: "anthropic" (Claude, paid), "openai" (any OpenAI-compatible API, e.g. Gemini free tier), or "mock" (demo)
   anthropicKey: env.ANTHROPIC_API_KEY || '',
-  llmProvider: env.LLM_PROVIDER || (env.ANTHROPIC_API_KEY ? 'anthropic' : 'mock'),
-  defaultModel: env.DEFAULT_MODEL || 'claude-haiku-5-5',
-  allowedModels: (env.ALLOWED_MODELS || 'claude-haiku-5-5,claude-sonnet-5-5').split(',').map(s => s.trim()).filter(Boolean),
+  openaiKey: env.OPENAI_COMPAT_API_KEY || env.GEMINI_API_KEY || '',
+  openaiBaseUrl: env.OPENAI_COMPAT_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/',
+  llmProvider: env.LLM_PROVIDER
+    || (env.ANTHROPIC_API_KEY ? 'anthropic' : (env.OPENAI_COMPAT_API_KEY || env.GEMINI_API_KEY) ? 'openai' : 'mock'),
   maxStepsPerRun: num(env.MAX_STEPS_PER_RUN, 25),
   maxTokensPerReply: num(env.MAX_TOKENS_PER_REPLY, 8000),
 
   // Cloud computers
   e2bKey: env.E2B_API_KEY || '',
+  // "e2b" (paid cloud VMs), "docker" (free: containers on your own server), or "local" (dev only)
   sandboxProvider: env.SANDBOX_PROVIDER || (env.E2B_API_KEY ? 'e2b' : 'local'),
+  dockerImage: env.DOCKER_AGENT_IMAGE || 'crewbase-agent:latest',
+  dockerNetwork: env.DOCKER_AGENT_NETWORK || 'crewbase-agents',
+  dockerCpus: env.DOCKER_AGENT_CPUS || '0.5',
+  dockerMemory: env.DOCKER_AGENT_MEMORY || '768m',
   sandboxTemplate: env.E2B_TEMPLATE || 'base',
   sandboxTimeoutMs: num(env.SANDBOX_TIMEOUT_MINUTES, 15) * 60_000,
   sandboxCostPerSecond: num(env.SANDBOX_COST_PER_SECOND, 0.000046), // E2B default 2 vCPU + 4 GiB ≈ $0.17/hour
@@ -54,5 +60,15 @@ export const MODEL_PRICES = {
   'claude-opus-5-5': { in: 4, out: 20, cacheWrite: 5, cacheRead: 0.20, label: 'Opus 5.5 — most capable' },
 };
 export const WEB_SEARCH_COST = 0.01; // $10 per 1,000 searches
+
+// Models depend on the AI provider.
+const defaultModels = config.llmProvider === 'openai' ? 'gemini-3.8-flash' : 'claude-haiku-5-5,claude-sonnet-5-5';
+config.allowedModels = (env.ALLOWED_MODELS || defaultModels).split(',').map(s => s.trim()).filter(Boolean);
+config.defaultModel = env.DEFAULT_MODEL || config.allowedModels[0];
+
+// Free mode: no per-dollar billing, limit runs per day instead (free AI tiers have daily caps).
+config.freeMode = config.llmProvider !== 'anthropic' && config.sandboxProvider !== 'e2b';
+config.maxRunsPerUserPerDay = num(env.MAX_RUNS_PER_USER_PER_DAY, config.freeMode ? 15 : 1000);
+if (config.sandboxProvider === 'docker') config.sandboxCostPerSecond = num(env.SANDBOX_COST_PER_SECOND, 0);
 
 fs.mkdirSync(config.dataDir, { recursive: true });

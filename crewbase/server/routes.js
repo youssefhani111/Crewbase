@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { config, MODEL_PRICES } from './config.js';
-import { db, one, all, run, newId, now, userSpendThisMonth, userLimit, monthStart } from './db.js';
+import { db, one, all, run, newId, now, userSpendThisMonth, userLimit, monthStart, userRunsToday } from './db.js';
 import { requireUser, requireAdmin, startSession, endSession, createUser, verifyPassword, rateLimit } from './auth.js';
 import { enqueueRun, stopRun, priceOf } from './runner.js';
 import { computerFor, destroyComputer } from './sandbox.js';
@@ -16,7 +16,7 @@ const str = (v, max) => String(v ?? '').trim().slice(0, max);
 function publicUser(u) {
   return {
     id: u.id, name: u.name, email: u.email, timezone: u.timezone, isAdmin: !!u.is_admin,
-    usage: { spentUsd: userSpendThisMonth(u.id), limitUsd: userLimit(u) },
+    usage: { spentUsd: userSpendThisMonth(u.id), limitUsd: userLimit(u), runsToday: userRunsToday(u.id), runsPerDay: config.maxRunsPerUserPerDay },
   };
 }
 
@@ -40,6 +40,10 @@ function ownAgent(req, res) {
 }
 
 function checkCredit(req, res) {
+  if (userRunsToday(req.user.id) >= config.maxRunsPerUserPerDay && !req.user.is_admin) {
+    bad(res, `You've used your ${config.maxRunsPerUserPerDay} agent tasks for today. More become available over the next 24 hours.`, 429);
+    return false;
+  }
   const limit = userLimit(req.user);
   if (userSpendThisMonth(req.user.id) >= limit) { bad(res, `You've used your $${limit.toFixed(2)} monthly credit. It resets on the 1st.`, 402); return false; }
   return true;
@@ -80,8 +84,10 @@ function agentFields(body, existing, tz) {
 api.get('/config', (_req, res) => res.json({
   appName: config.appName,
   inviteRequired: !!config.inviteCode,
-  demoAi: config.llmProvider !== 'anthropic',
-  demoComputer: config.sandboxProvider !== 'e2b',
+  demoAi: config.llmProvider === 'mock',
+  demoComputer: config.sandboxProvider === 'local',
+  freeMode: config.freeMode,
+  maxRunsPerDay: config.maxRunsPerUserPerDay,
   freeMonthlyCreditUsd: config.freeMonthlyCreditUsd,
   maxAgentsPerUser: config.maxAgentsPerUser,
   minScheduleHours: config.minScheduleMinutes / 60,
@@ -250,7 +256,7 @@ const cleanPath = p => {
 
 api.get('/agents/:id/files', requireUser, async (req, res) => {
   const a = ownAgent(req, res); if (!a) return;
-  if (!a.sandbox_id && config.sandboxProvider === 'e2b') return res.json({ path: '.', items: [] });
+  if (!a.sandbox_id && config.sandboxProvider !== 'local') return res.json({ path: '.', items: [] });
   try {
     const p = cleanPath(req.query.path);
     const items = await withComputer(a, c => c.list(p));

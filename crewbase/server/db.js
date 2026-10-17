@@ -114,6 +114,11 @@ export function userSpendThisMonth(userId) {
   return a + b;
 }
 
+// Runs started in the last 24 hours (free AI tiers have daily caps).
+export function userRunsToday(userId) {
+  return one(`SELECT COUNT(*) AS n FROM runs WHERE user_id = ? AND created_at >= ? AND status != 'stopped'`, userId, Date.now() - 86400_000).n;
+}
+
 export function userLimit(user) {
   return user.credit_limit_usd ?? config.freeMonthlyCreditUsd;
 }
