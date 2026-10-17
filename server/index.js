@@ -7,7 +7,7 @@ import { api } from './routes.js';
 import { startRunner } from './runner.js';
 
 if (config.sandboxProvider === 'local' && process.env.NODE_ENV === 'production' && process.env.ALLOW_LOCAL_SANDBOX !== 'true') {
-  console.error('\n✖ Refusing to start: no E2B_API_KEY set, and "local" computers run user commands on THIS server.\n  Add E2B_API_KEY (recommended) or set ALLOW_LOCAL_SANDBOX=true for a private test.\n');
+  console.error('\n✖ Refusing to start: "local" computers run user commands directly on THIS server.\n  Use SANDBOX_PROVIDER=docker (free) or add E2B_API_KEY.\n');
   process.exit(1);
 }
 
@@ -36,7 +36,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(config.port, () => {
   console.log(`\n${config.appName} running on http://localhost:${config.port}`);
-  console.log(`  AI:        ${config.llmProvider === 'anthropic' ? 'Claude API' : 'DEMO (no ANTHROPIC_API_KEY)'}`);
-  console.log(`  Computers: ${config.sandboxProvider === 'e2b' ? 'E2B cloud' : 'LOCAL folder (dev only)'}\n`);
+  console.log(`  AI:        ${{ anthropic: 'Claude API', openai: `${config.openaiBaseUrl} (${config.defaultModel})`, mock: 'DEMO (no AI key)' }[config.llmProvider]}`);
+  console.log(`  Computers: ${{ e2b: 'E2B cloud', docker: `Docker containers (${config.dockerImage})`, local: 'LOCAL folder (dev only)' }[config.sandboxProvider]}\n`);
   startRunner();
 });

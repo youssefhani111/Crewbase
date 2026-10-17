@@ -1,6 +1,6 @@
 // The agent brain: takes a task, works on its own computer with Claude, records everything, tracks cost.
 import { config, MODEL_PRICES, WEB_SEARCH_COST } from './config.js';
-import { one, all, run, newId, now, addEvent, userSpendThisMonth, userLimit } from './db.js';
+import { one, all, run, newId, now, addEvent, userSpendThisMonth, userLimit, userRunsToday } from './db.js';
 import { callModel } from './llm.js';
 import { computerFor } from './sandbox.js';
 import { nextRunAt } from './schedule.js';
@@ -50,10 +50,25 @@ const CLIENT_TOOLS = [
   },
 ];
 
+// With Claude, web search and reading run on Anthropic's side.
 const SERVER_TOOLS = [
   { type: 'web_search_20250305', name: 'web_search', max_uses: 8 },
   { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 8, max_content_tokens: 20000 },
 ];
+// With free AI providers, the agent searches and reads the web from its own computer instead.
+const FREE_WEB_TOOLS = [
+  {
+    name: 'web_search',
+    description: 'Search the web. Returns up to 8 results with title, link and snippet. Then use web_fetch to read the pages that matter.',
+    input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+  },
+  {
+    name: 'web_fetch',
+    description: 'Read a web page and get its text (and title). Use for links from search results or from the user.',
+    input_schema: { type: 'object', properties: { url: { type: 'string', description: 'Full http(s) URL' } }, required: ['url'] },
+  },
+];
+const toolsForProvider = () => (config.llmProvider === 'anthropic' ? [...CLIENT_TOOLS, ...SERVER_TOOLS] : [...CLIENT_TOOLS, ...FREE_WEB_TOOLS]);
 
 function systemPrompt(agent, user) {
   const local = new Date().toLocaleString('en-GB', { timeZone: user.timezone, dateStyle: 'full', timeStyle: 'short' });
@@ -79,6 +94,7 @@ ${agent.memory?.trim() || '(empty — use update_memory to save anything worth r
 
 // ---------- Cost ----------
 export function priceOf(model, usage) {
+  if (config.llmProvider !== 'anthropic' && !MODEL_PRICES[model]) return 0; // free AI tier
   const p = MODEL_PRICES[model] || MODEL_PRICES[config.defaultModel] || { in: 3, out: 15, cacheWrite: 3.75, cacheRead: 0.3 };
   const inTok = usage.input_tokens || 0, outTok = usage.output_tokens || 0;
   const cw = usage.cache_creation_input_tokens || 0, cr = usage.cache_read_input_tokens || 0;
@@ -184,6 +200,11 @@ async function runTool(block, ctx) {
       agent.memory = mem;
       return { text: 'Memory updated.', ok: true };
     }
+    case 'web_search':
+    case 'web_fetch': {
+      const r = await computer.web(block.name === 'web_search' ? 'search' : 'fetch', block.name === 'web_search' ? { query: String(inp.query || '') } : { url: String(inp.url || '') });
+      return { text: (r.stdout || r.stderr || '(no result)').trim(), ok: r.exitCode === 0 };
+    }
     case 'notify_owner': {
       const msg = String(inp.message || '').slice(0, 3000);
       addEvent(agent.id, ctx.runId, 'notify', { message: msg });
@@ -204,6 +225,8 @@ function toolLabel(block) {
     case 'list_files': return `Listed ${i.path || 'workspace'}`;
     case 'update_memory': return 'Updated memory';
     case 'notify_owner': return 'Notified you';
+    case 'web_search': return `Searched the web: ${i.query || ''}`;
+    case 'web_fetch': return `Read ${i.url || 'a page'}`;
     default: return block.name;
   }
 }
@@ -229,7 +252,7 @@ async function executeRun(runId) {
   const first = { role: 'user', content: r.trigger === 'schedule' ? `[Scheduled run] ${r.input}` : r.input };
   messages.push(first);
   saveMessage(agent.id, r.id, 'user', first.content);
-  const tools = [...CLIENT_TOOLS, ...SERVER_TOOLS];
+  const tools = toolsForProvider();
   const ctx = { computer, agent, runId: r.id };
 
   let status = 'done', error = null, steps = 0;
@@ -259,7 +282,7 @@ async function executeRun(runId) {
       // (e.g. when the reply hit max_tokens), so the saved history stays valid for the next run.
       let content = resp.content.map(b => Object.fromEntries(Object.entries(b).filter(([, v]) => v !== null)));
       if (resp.stop_reason !== 'tool_use' && content.some(b => b.type === 'tool_use')) {
-        content = content.filter(b => b.type !== 'tool_use');
+        content = content.filter(b => b.type !== 'tool_use' && b.type !== 'oa_raw');
         if (!content.length) content = [{ type: 'text', text: 'My reply was cut off. Ask me to continue.' }];
       }
       messages.push({ role: 'assistant', content });
@@ -316,6 +339,7 @@ export function startRunner() {
       run('UPDATE agents SET next_run_at = ? WHERE id = ?', nextRunAt(a.schedule_type, a.schedule_value, a.tz, now()), a.id);
       if (a.status !== 'idle') continue; // still busy: skip this slot
       if (userSpendThisMonth(user.id) >= userLimit(user)) continue;
+      if (!user.is_admin && userRunsToday(user.id) >= config.maxRunsPerUserPerDay) continue;
       enqueueRun(a, user, a.schedule_task || 'Do your regular scheduled work.', 'schedule');
     }
   }, 30_000);

@@ -1,16 +1,20 @@
-// Talks to Claude. In "mock" mode (no API key) it returns scripted replies so you can test the app for free.
+// Talks to the AI. Claude (paid), any OpenAI-compatible API such as Gemini's free tier, or "mock" scripted replies.
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from './config.js';
+import { callOpenAICompat, completeOpenAICompat } from './llm-openai.js';
 
 const client = config.llmProvider === 'anthropic' ? new Anthropic({ apiKey: config.anthropicKey }) : null;
 
 export async function callModel({ model, system, tools, messages }) {
+  if (config.llmProvider === 'openai') return callOpenAICompat({ model, system, tools, messages });
   if (!client) return mockModel(messages);
 
   // Cache the long, repeated parts (tools + system, and the conversation so far) to cut costs.
+  // Blocks saved by another AI provider ("oa_raw") are dropped so switching providers stays valid.
   const msgs = messages.map((m, i) => {
-    if (i !== messages.length - 1 || typeof m.content === 'string') return m;
-    const content = m.content.map((b, j) => (j === m.content.length - 1 ? { ...b, cache_control: { type: 'ephemeral' } } : b));
+    if (typeof m.content === 'string') return m;
+    let content = m.content.filter(b => b.type !== 'oa_raw');
+    if (i === messages.length - 1) content = content.map((b, j) => (j === content.length - 1 ? { ...b, cache_control: { type: 'ephemeral' } } : b));
     return { ...m, content };
   });
 
@@ -35,18 +39,24 @@ export async function draftAgent(prompt, timezone) {
     schedule_task: prompt.trim(),
     usage: { input_tokens: 0, output_tokens: 0 },
   };
-  if (!client) return fallback;
+  if (config.llmProvider === 'mock') return fallback;
 
-  const resp = await client.messages.create({
-    model: config.defaultModel,
-    max_tokens: 1500,
-    system: 'You design AI agents. Reply with ONLY a JSON object, no markdown fences.',
-    messages: [{
-      role: 'user',
-      content: `A user wants an AI agent that has its own cloud computer (terminal, files, web search and web reading). Their request:\n"""${prompt}"""\n\nReturn JSON with keys:\n- name: short friendly agent name (max 3 words)\n- emoji: one emoji\n- role: clear instructions for the agent in second person ("You are..."), 80-200 words, covering goal, steps, output format and files to save. Write it in the same language as the request.\n- schedule_type: "manual", "interval" or "daily"\n- schedule_hours: number (for interval)\n- schedule_time: "HH:MM" 24h (for daily), in the user's time zone ${timezone}\n- schedule_days: array of weekday numbers 0=Sunday..6=Saturday (for daily)\n- schedule_task: what the agent should do on each scheduled run (one or two sentences)`,
-    }],
-  });
-  const text = resp.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  const ask = `A user wants an AI agent that has its own cloud computer (terminal, files, web search and web reading). Their request:\n"""${prompt}"""\n\nReturn JSON with keys:\n- name: short friendly agent name (max 3 words)\n- emoji: one emoji\n- role: clear instructions for the agent in second person ("You are..."), 80-200 words, covering goal, steps, output format and files to save. Write it in the same language as the request.\n- schedule_type: "manual", "interval" or "daily"\n- schedule_hours: number (for interval)\n- schedule_time: "HH:MM" 24h (for daily), in the user's time zone ${timezone}\n- schedule_days: array of weekday numbers 0=Sunday..6=Saturday (for daily)\n- schedule_task: what the agent should do on each scheduled run (one or two sentences)`;
+
+  let text, usage;
+  if (config.llmProvider === 'openai') {
+    ({ text, usage } = await completeOpenAICompat(ask));
+  } else {
+    const resp = await client.messages.create({
+      model: config.defaultModel,
+      max_tokens: 1500,
+      system: 'You design AI agents. Reply with ONLY a JSON object, no markdown fences.',
+      messages: [{ role: 'user', content: ask }],
+    });
+    text = resp.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    usage = resp.usage;
+  }
+  const resp = { usage };
   try {
     const j = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
     return { ...fallback, ...j, usage: resp.usage };
