@@ -103,7 +103,7 @@ function landing() {
       <div><b>3</b><h3>Results come to you</h3><p>Chat with it, download what it made, or get a ping in Slack or Discord when something is ready.</p></div>
     </section>
   </main>
-  <footer class="foot">${esc(n)} · ${money(state.config.freeMonthlyCreditUsd)} of free agent work every month</footer>`;
+  <footer class="foot">${esc(n)} · ${state.config.freeMode ? `free · up to ${state.config.maxRunsPerDay} agent tasks a day` : `${money(state.config.freeMonthlyCreditUsd)} of free agent work every month`}</footer>`;
   playDemo($('#demo'));
 }
 
@@ -145,7 +145,7 @@ function authPage(kind) {
   <div class="auth">
     <a class="brand" href="#/"><i></i>${esc(n)}</a>
     <h1>${signup ? 'Create your account' : 'Welcome back'}</h1>
-    <p class="sub">${signup ? `You get ${money(state.config.freeMonthlyCreditUsd)} of agent work free every month.` : 'Log in to see what your agents did.'}</p>
+    <p class="sub">${signup ? (state.config.freeMode ? `Free. Your agents can do up to ${state.config.maxRunsPerDay} tasks a day.` : `You get ${money(state.config.freeMonthlyCreditUsd)} of agent work free every month.`) : 'Log in to see what your agents did.'}</p>
     <form id="f" novalidate>
       ${signup ? '<label for="name">Your name</label><input id="name" autocomplete="name" required>' : ''}
       <label for="email">Email</label><input id="email" type="email" autocomplete="email" required>
@@ -188,8 +188,12 @@ function shell(activeId, inner) {
       <div class="rail-h">Your agents</div>
       <div id="railList">${railList(activeId)}</div>
       <div class="spacer"></div>
-      <div class="meter" title="Resets on the 1st of each month">This month: ${money(u.usage.spentUsd)} of ${money(u.usage.limitUsd)}
-        <div class="bar"><i class="${pct > 80 ? 'hot' : ''}" style="width:${pct}%"></i></div></div>
+      ${state.config.freeMode ? (() => {
+        const tp = Math.min(100, (u.usage.runsToday / Math.max(u.usage.runsPerDay, 1)) * 100);
+        return `<div class="meter" title="Counts tasks started in the last 24 hours">Tasks today: ${u.usage.runsToday} of ${u.usage.runsPerDay}
+          <div class="bar"><i class="${tp > 80 ? 'hot' : ''}" style="width:${tp}%"></i></div></div>`;
+      })() : `<div class="meter" title="Resets on the 1st of each month">This month: ${money(u.usage.spentUsd)} of ${money(u.usage.limitUsd)}
+        <div class="bar"><i class="${pct > 80 ? 'hot' : ''}" style="width:${pct}%"></i></div></div>`}
       <div class="rail-foot">
         <a href="#/account">Account</a>
         ${u.isAdmin ? '<a href="#/admin">Admin</a>' : ''}
@@ -228,7 +232,7 @@ async function dashboard() {
     <a class="desk" href="#/a/${a.id}">
       <div class="desk-h">${avatar(a)}<div style="min-width:0"><h3>${esc(a.name)}</h3><div class="st">${esc(statusText(a))}</div></div></div>
       <div class="desk-screen">${a.lastMessage ? esc(a.lastMessage.replace(/[*`#_>]/g, '').slice(0, 220)) : '<span style="color:var(--screen-dim)">No work yet. Say hello to get it started.</span>'}</div>
-      <div class="desk-f"><span>${a.lastRun ? `Last run ${ago(a.lastRun.created_at)}` : 'Never run'}</span><span>${money(a.monthCostUsd)} this month</span></div>
+      <div class="desk-f"><span>${a.lastRun ? `Last run ${ago(a.lastRun.created_at)}` : 'Never run'}</span><span>${state.config.freeMode ? `${a.monthRuns} task${a.monthRuns === 1 ? '' : 's'} this month` : `${money(a.monthCostUsd)} this month`}</span></div>
     </a>`).join('');
   shell(null, `
     ${demoBanner()}
@@ -443,7 +447,7 @@ function chatTab(box, agent) {
       } else if (e.type === 'status' && d.message) {
         msgs.insertAdjacentHTML('beforeend', `<div class="msg sys">${esc(d.message)}</div>`);
       } else if (e.type === 'done') {
-        msgs.insertAdjacentHTML('beforeend', `<div class="msg sys">Finished · ${money(d.cost)} · ${d.steps} step${d.steps === 1 ? '' : 's'}</div>`);
+        msgs.insertAdjacentHTML('beforeend', `<div class="msg sys">Finished · ${state.config.freeMode ? '' : `${money(d.cost)} · `}${d.steps} step${d.steps === 1 ? '' : 's'}</div>`);
         scr.insertAdjacentHTML('beforeend', `<div class="line d">✓ done, computer going to sleep</div>`);
       } else if (e.type === 'tool') {
         const icon = d.name === 'run_command' ? '' : d.name.startsWith('web') ? '⌕ ' : '◆ ';
