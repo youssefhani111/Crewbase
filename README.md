@@ -31,6 +31,35 @@ You host it. Users get a free monthly credit that you set, and you can see and c
 
 So a typical daily Haiku agent costs roughly **$0.50–2 per month**. E2B's free Hobby plan includes **$100 of credit** (sessions up to 1 hour, 20 at once); move to Pro when you have real users. Every run's cost is recorded and counted against the user's monthly credit (`FREE_MONTHLY_CREDIT_USD`, default $1). When it's used up, their agents stop until the 1st of next month or until you raise their limit on the Admin page.
 
+## Free forever setup (Oracle Cloud + Gemini)
+
+Costs $0: the website and every agent's computer run on one **Oracle Cloud Always Free** server, and the agents think with **Google Gemini's free API tier**. Good for you and a small group; free tiers have daily limits.
+
+| Part | Free option | Limits to know |
+|---|---|---|
+| Server + agent computers | Oracle Always Free VM (Ampere A1, 2 CPU / 12 GB since June 2026) | Each agent gets a Docker container (0.5 CPU, 768 MB). About 3 agents work at the same time; the rest wait their turn. |
+| AI | Gemini 3.8 Flash, free tier | Daily request caps (see AI Studio). Google may use free-tier prompts to improve its products, so tell your users. |
+| Web search | DuckDuckGo, from the agent's computer | Can be rate-limited if used heavily. |
+| HTTPS address | `your-ip.sslip.io` with an automatic certificate | Use your own domain later by setting `DOMAIN=` when running setup. |
+
+**Steps**
+
+1. **Gemini key:** go to https://aistudio.google.com/apikey and create a free API key.
+2. **Oracle server:** sign up at https://www.oracle.com/cloud/free/ → Create a VM instance → Image **Ubuntu 24.04**, Shape **Ampere VM.Standard.A1.Flex** with **2 OCPU / 12 GB** → download the SSH key → Create.
+3. **Open the web ports:** in the instance page click the **Subnet** → **Security List** → **Add Ingress Rules**: source `0.0.0.0/0`, TCP, destination ports `80,443`.
+4. **Install:** on your Mac open Terminal and run (use your key file and the instance's public IP):
+   ```bash
+   chmod 400 ~/Downloads/ssh-key-*.key
+   ssh -i ~/Downloads/ssh-key-*.key ubuntu@YOUR_PUBLIC_IP
+   curl -fsSL https://raw.githubusercontent.com/youssefhani111/Crewbase/main/deploy/setup.sh | bash
+   ```
+   It asks for your Gemini key, your email (admin) and an optional invite code, then prints your site's address.
+5. Open the address, sign up with your admin email and create an agent.
+
+**Update later:** SSH in and run the same `curl … | bash` line again. **Logs:** `sudo journalctl -u crewbase -f`.
+
+**Safety:** agent containers run as a normal user with no extra privileges, CPU/memory limits, and a firewall that blocks them from the server itself, private networks and Oracle's metadata service. Containers are not as strongly isolated as E2B's virtual machines, so keep sign-ups invite-only.
+
 ## Run it on your computer (free test mode)
 
 Needs [Node.js 22.13+](https://nodejs.org).
@@ -95,5 +124,8 @@ server/
   sandbox.js    the agent's computer (E2B, or a local folder in test mode)
   schedule.js   time-zone-aware schedules
   llm.js        Claude API + test-mode replies + "draft my agent"
+  llm-openai.js free AI option (Gemini or any OpenAI-compatible API)
 public/         the website (no build step)
+agent-image/    the agent computer for free mode (Docker image + web search/read tool)
+deploy/         one-command Oracle setup and firewall rules
 ```
